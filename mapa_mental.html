@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa Mental Refinado</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: -1;
+        }
+        .nodo {
+            position: absolute;
+            background-color: #ffeb3b;
+            padding: 5px 10px;
+            border-radius: 10px;
+            box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+            cursor: move;
+            user-select: none;
+        }
+        .nodo h3 {
+            margin: 0;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .nodo .actions {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 5px;
+        }
+        .actions button {
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .actions button i {
+            font-size: 10px;
+        }
+        .add-nodo-central {
+            position: absolute;
+            top: 10px;
+            right: -25px;
+            padding: 5px;
+            background-color: #4CAF50;
+            color: white;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .main-actions {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        .main-actions button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        .main-actions button:hover {
+            background-color: #45a049;
+        }
+        button {
+            margin: 5px;
+            padding: 10px;
+        }
+        input[type="text"] {
+            border: none;
+            font-size: 12px;
+            background-color: transparent;
+            width: 100px;
+        }
+    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div class="main-actions">
+    <button id="add-central">Nova Ideia Central</button>
+    <button id="save">Salvar Projeto</button>
+    <button id="load">Carregar Projeto</button>
+    <button id="hide-all">Ocultar Tudo</button>
+    <button id="expand-all">Expandir Tudo</button>
+</div>
+
+<div class="nodo" id="nodo-principal" style="top: 100px; left: 100px;">
+    <h3 contenteditable="true">Ideia Central</h3>
+    <button class="add-nodo-central"><i class="fas fa-plus"></i></button>
+    <div class="actions">
+        <button class="toggle"><i class="fas fa-minus"></i></button>
+        <button class="delete"><i class="fas fa-trash-alt"></i></button>
+    </div>
+</div>
+
+<script>
+    let nodos = [];
+    let centrais = [];
+    let ocultados = {};  // Para armazenar a posição original dos nodos ocultados
+    let savedState = []; // Para salvar o estado dos nodos (exibidos/ocultados)
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const nodoPrincipal = document.getElementById('nodo-principal');
+
+    // Ajusta o tamanho do canvas para cobrir toda a janela
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        desenharLinhas();
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // Função para adicionar um novo nodo a uma ideia central
+    function adicionarNodo(nodoPai, conteudo = 'Nova Ideia') {
+        const nodo = document.createElement('div');
+        nodo.classList.add('nodo');
+        nodo.style.top = `${nodoPai.offsetTop + 80}px`;  // Mais próximo ao ser ocultado
+        nodo.style.left = `${nodoPai.offsetLeft + 150}px`; // Ajuste para posicionamento
+        nodo.innerHTML = `
+            <h3 contenteditable="true">${conteudo}</h3>
+            <div class="actions">
+                <button class="toggle"><i class="fas fa-minus"></i></button>
+                <button class="delete"><i class="fas fa-trash-alt"></i></button>
+            </div>`;
+        document.body.appendChild(nodo);
+        nodos.push({ nodo, nodoPai, originalPos: { top: nodo.style.top, left: nodo.style.left } });
+        enableDrag(nodo);
+        enableActions(nodo);
+        desenharLinhas();
+    }
+
+    // Função para adicionar uma nova ideia central
+    document.getElementById('add-central').addEventListener('click', () => {
+        const novaCentral = document.createElement('div');
+        novaCentral.classList.add('nodo');
+        novaCentral.style.top = `${Math.random() * window.innerHeight}px`;
+        novaCentral.style.left = `${Math.random() * window.innerWidth}px`;
+        novaCentral.innerHTML = `
+            <h3 contenteditable="true">Nova Ideia Central</h3>
+            <button class="add-nodo-central"><i class="fas fa-plus"></i></button>
+            <div class="actions">
+                <button class="toggle"><i class="fas fa-minus"></i></button>
+                <button class="delete"><i class="fas fa-trash-alt"></i></button>
+            </div>`;
+        document.body.appendChild(novaCentral);
+        centrais.push(novaCentral);
+        enableDrag(novaCentral);
+        enableActions(novaCentral);
+        enableAddNodoCentral(novaCentral);
+        desenharLinhas();
+    });
+
+    // Função para permitir arrastar os nodos
+    function enableDrag(nodo) {
+        let isDragging = false;
+        let offsetX, offsetY;
+
+        nodo.addEventListener('mousedown', (e) => {
+            if (!e.target.classList.contains('delete') && !e.target.classList.contains('toggle') && !e.target.classList.contains('add-nodo-central')) {
+                isDragging = true;
+                offsetX = e.offsetX;
+                offsetY = e.offsetY;
+            }
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                nodo.style.left = `${e.pageX - offsetX}px`;
+                nodo.style.top = `${e.pageY - offsetY}px`;
+                desenharLinhas();
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+    }
+
+    // Função para as ações de excluir e ocultar/exibir nodos
+    function enableActions(nodo) {
+        const nodoData = nodos.find(n => n.nodo === nodo);
+        
+        nodo.querySelector('.delete').addEventListener('click', () => {
+            nodo.remove();
+            nodos = nodos.filter(n => n.nodo !== nodo);
+            desenharLinhas();
+        });
+
+        nodo.querySelector('.toggle').addEventListener('click', (e) => {
+            const h3 = nodo.querySelector('h3');
+            const icon = e.target;
+            if (h3.style.display === 'none') {
+                h3.style.display = 'block';
+                icon.classList.replace('fa-plus', 'fa-minus');
+                nodo.style.top = nodoData.originalPos.top;
+                nodo.style.left = nodoData.originalPos.left;
+                delete ocultados[nodo];
+            } else {
+                ocultados[nodo] = { top: nodo.style.top, left: nodo.style.left };
+                h3.style.display = 'none';
+                icon.classList.replace('fa-minus', 'fa-plus');
+                nodo.style.top = `${nodoData.nodoPai.offsetTop + 30}px`;  // Aproxima o nodo ao ocultar
+                nodo.style.left = `${nodoData.nodoPai.offsetLeft + 30}px`;
+            }
+            desenharLinhas();
+        });
+    }
+
+    // Função para habilitar adicionar nodo em cada ideia central
+    function enableAddNodoCentral(nodoCentral) {
+        nodoCentral.querySelector('.add-nodo-central').addEventListener('click', () => {
+            adicionarNodo(nodoCentral, 'Nova Ideia');
+        });
+    }
+
+    // Função para ocultar todos os nodos
+    document.getElementById('hide-all').addEventListener('click', () => {
+        nodos.forEach(({ nodo }) => {
+            const h3 = nodo.querySelector('h3');
+            h3.style.display = 'none';
+            nodo.querySelector('.toggle i').classList.replace('fa-minus', 'fa-plus');
+        });
+        desenharLinhas();
+    });
+
+    // Função para expandir todos os nodos
+    document.getElementById('expand-all').addEventListener('click', () => {
+        nodos.forEach(({ nodo, originalPos }) => {
+            const h3 = nodo.querySelector('h3');
+            h3.style.display = 'block';
+            nodo.querySelector('.toggle i').classList.replace('fa-plus', 'fa-minus');
+            nodo.style.top = originalPos.top;
+            nodo.style.left = originalPos.left;
+        });
+        desenharLinhas();
+    });
+
+    // Ativar adicionar nodo na ideia central principal
+    enableAddNodoCentral(nodoPrincipal);
+
+    // Ativar arrastar no nodo principal
+    enableDrag(nodoPrincipal);
+    enableActions(nodoPrincipal);
+
+    // Função para desenhar linhas entre nodos
+    function desenharLinhas() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        centrais.concat([nodoPrincipal]).forEach(central => {
+            const centralRect = central.getBoundingClientRect();
+
+            nodos.forEach(({ nodo, nodoPai }) => {
+                if (nodoPai === central) {
+                    const nodoRect = nodo.getBoundingClientRect();
+                    ctx.beginPath();
+                    ctx.moveTo(centralRect.left + centralRect.width / 2, centralRect.top + centralRect.height / 2);
+                    ctx.lineTo(nodoRect.left + nodoRect.width / 2, nodoRect.top + nodoRect.height / 2);
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+            });
+        });
+    }
+
+    // Função para salvar o projeto no localStorage
+    document.getElementById('save').addEventListener('click', () => {
+        // Salvar todas as ideias centrais e nodos
+        savedState = [
+            { 
+                top: nodoPrincipal.style.top, 
+                left: nodoPrincipal.style.left, 
+                content: nodoPrincipal.querySelector('h3').innerText, 
+                isCentral: true, 
+                isPrincipal: true 
+            },
+            ...centrais.map(central => {
+                const rect = central.getBoundingClientRect();
+                return {
+                    top: rect.top,
+                    left: rect.left,
+                    content: central.querySelector('h3').innerText,
+                    isCentral: true
+                };
+            }),
+            ...nodos.map(({ nodo, nodoPai, originalPos }) => {
+                const rect = nodo.getBoundingClientRect();
+                const isVisible = nodo.querySelector('h3').style.display !== 'none';
+                return {
+                    top: rect.top,
+                    left: rect.left,
+                    content: nodo.querySelector('h3').innerText,
+                    central: nodoPai === nodoPrincipal ? 'principal' : nodoPai.querySelector('h3').innerText,
+                    isVisible: isVisible,
+                    originalPos: originalPos
+                };
+            })
+        ];
+        localStorage.setItem('mapaMental', JSON.stringify(savedState));
+        alert('Projeto salvo com sucesso!');
+    });
+
+    // Função para carregar o projeto do localStorage
+    document.getElementById('load').addEventListener('click', () => {
+        const projeto = JSON.parse(localStorage.getItem('mapaMental'));
+        if (projeto) {
+            nodos.forEach(({ nodo }) => nodo.remove());
+            centrais.forEach(c => c.remove());
+            nodos = [];
+            centrais = [];
+            
+            projeto.forEach(dados => {
+                if (dados.isPrincipal) {
+                    nodoPrincipal.style.top = dados.top;
+                    nodoPrincipal.style.left = dados.left;
+                    nodoPrincipal.querySelector('h3').innerText = dados.content;
+                } else if (dados.isCentral) {
+                    const novaCentral = document.createElement('div');
+                    novaCentral.classList.add('nodo');
+                    novaCentral.style.top = `${dados.top}px`;
+                    novaCentral.style.left = `${dados.left}px`;
+                    novaCentral.innerHTML = `
+                        <h3 contenteditable="true">${dados.content}</h3>
+                        <button class="add-nodo-central"><i class="fas fa-plus"></i></button>
+                        <div class="actions">
+                            <button class="toggle"><i class="fas fa-minus"></i></button>
+                            <button class="delete"><i class="fas fa-trash-alt"></i></button>
+                        </div>`;
+                    document.body.appendChild(novaCentral);
+                    centrais.push(novaCentral);
+                    enableDrag(novaCentral);
+                    enableActions(novaCentral);
+                    enableAddNodoCentral(novaCentral);
+                } else {
+                    const nodoPai = dados.central === 'principal' ? nodoPrincipal : centrais.find(n => n.querySelector('h3').innerText === dados.central);
+                    adicionarNodo(nodoPai, dados.content);
+                    const nodo = nodos[nodos.length - 1].nodo;
+                    nodos[nodos.length - 1].originalPos = dados.originalPos;
+                    if (!dados.isVisible) {
+                        nodo.querySelector('h3').style.display = 'none';
+                        nodo.style.top = `${nodoPai.offsetTop + 30}px`;
+                        nodo.style.left = `${nodoPai.offsetLeft + 30}px`;
+                        nodo.querySelector('.toggle').querySelector('i').classList.replace('fa-minus', 'fa-plus');
+                    }
+                }
+            });
+            desenharLinhas();
+        } else {
+            alert('Nenhum projeto salvo encontrado.');
+        }
+    });
+
+</script>
+
+</body>
+</html>
